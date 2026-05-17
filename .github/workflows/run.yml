@@ -1,0 +1,36 @@
+name: 自动获客系统
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 19-20 * * *'
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    outputs:
+      filename: ${{ steps.run-script.outputs.filename }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置Python环境
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: pip install requests pandas openpyxl beautifulsoup4
+
+      - name: 运行脚本
+        id: run-script
+        run: python scraper.py
+
+      - name: 上传客户名录到Artifacts
+        if: steps.run-script.outputs.filename != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: 客户名录
+          path: ${{ steps.run-script.outputs.filename }}
+          retention-days: 30
