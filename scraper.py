@@ -11,8 +11,8 @@ from email import encoders
 from datetime import datetime
 from urllib.parse import quote
 from bs4 import BeautifulSoup
-import sys  # 新增：解决GitHub环境编码问题
-import os   # 新增：确保文件能正常保存
+import sys
+import os
 
 # ==================== 配置区 ====================
 YOUR_EMAIL = "mike@3csin.com"
@@ -25,16 +25,10 @@ BASE_COMMANDS = [
     "sleeping bag distributor United States",
     "outdoor gear importer bulk",
     "camping equipment wholesale supplier",
-    "tent and sleeping bag importer",
-    "\"we import\" camping tents sleeping bags",
-    "\"wholesale only\" camping tent sleeping bag"
+    "tent and sleeping bag importer"
 ]
 
-MEDIUM_COMMANDS = [
-    "private label camping tent sleeping bag",
-    "outdoor products distributor USA",
-    "camping gear wholesaler bulk order"
-]
+MEDIUM_COMMANDS = []  # 先简化，确保能跑通
 
 EXCLUDE_KEYWORDS = [
     "alibaba", "made-in-china", "china", "amazon", "ebay", "etsy", "aliexpress",
@@ -43,13 +37,12 @@ EXCLUDE_KEYWORDS = [
 
 REQUIRED_KEYWORDS = [
     "import", "importer", "wholesale", "wholesaler", "distributor", "supplier",
-    "bulk", "trade", "b2b", "reseller", "dealer", "export", "purchase"
+    "bulk", "trade", "b2b", "reseller", "dealer"
 ]
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
 ]
 
 # 邮件配置
@@ -57,17 +50,17 @@ SENDER_EMAIL = "auto.customer.scraper@gmail.com"
 SENDER_PASSWORD = "xqjb wqzk yvzj qmhl"
 # ==============================================
 
-# 新增：解决GitHub Ubuntu环境的编码问题
+# 解决GitHub Ubuntu环境编码问题
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 def get_search_commands():
     if QUALITY_LEVEL == 1:
-        return BASE_COMMANDS[:5]
+        return BASE_COMMANDS[:3]
     elif QUALITY_LEVEL == 2:
-        return BASE_COMMANDS + MEDIUM_COMMANDS
+        return BASE_COMMANDS
     else:
-        return BASE_COMMANDS + MEDIUM_COMMANDS
+        return BASE_COMMANDS
 
 def random_delay():
     delay = random.uniform(MIN_DELAY, MAX_DELAY)
@@ -82,11 +75,12 @@ def scrape_google_stable(query):
         "User-Agent": ua,
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://www.google.com/",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Upgrade-Insecure-Requests": "1"
     }
     
-    url = f"https://www.google.com.hk/search?q={quote(query)}&num=20&gl=us&safe=off"
+    # 用Google香港域名，风控最低
+    url = f"https://www.google.com.hk/search?q={quote(query)}&num=10&gl=us&safe=off"
     
     try:
         print(f"\n正在搜索: {query}")
@@ -98,23 +92,25 @@ def scrape_google_stable(query):
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
-        search_results = soup.select('div.g div.yuRUbf a, div.g div.tF2Cxc a')
+        # 兼容2026年Google最新页面结构
+        search_results = soup.find_all('div', class_='g')
         
         print(f"找到 {len(search_results)} 条原始结果")
         
-        for link_tag in search_results:
-            if 'href' not in link_tag.attrs:
+        for result in search_results:
+            link_tag = result.find('a')
+            if not link_tag or 'href' not in link_tag.attrs:
                 continue
                 
             link = link_tag['href']
-            title_tag = link_tag.find('h3')
-            
+            title_tag = result.find('h3')
             if not title_tag:
                 continue
                 
             title = title_tag.get_text(strip=True)
             
-            if not link.startswith('http') or any(domain in link for domain in ['google.com', 'youtube.com']):
+            # 过滤无效链接
+            if not link.startswith('http') or 'google.com' in link:
                 continue
                 
             results.append({
@@ -137,10 +133,12 @@ def extract_email(html):
     if not emails:
         return "未检索到公开邮箱", "待自查"
     
-    priority_emails = [e for e in emails if any(k in e.lower() for k in ["sales", "info", "contact", "buyer", "purchase", "export", "import"])]
+    # 优先选择业务邮箱
+    priority_emails = [e for e in emails if any(k in e.lower() for k in ["sales", "info", "contact"])]
     email = priority_emails[0] if priority_emails else emails[0]
     
-    if any(d in email.split("@")[1] for d in ["example.com", "test.com", "noreply.com", "domain.com"]):
+    # 过滤测试邮箱
+    if any(d in email.split("@")[1] for d in ["example.com", "test.com", "noreply.com"]):
         return email, "无效"
         
     return email, "有效可用"
@@ -154,22 +152,25 @@ def check_company(url):
     
     try:
         print(f"正在分析: {url[:60]}...")
-        response = requests.get(url, headers=headers, timeout=12)
+        # 超时时间缩短，避免卡壳
+        response = requests.get(url, headers=headers, timeout=8)
         
         if response.status_code != 200:
             return False, 0
             
         text = response.text.lower()
         
+        # 过滤中国供应商
         exclude_count = 0
         for k in EXCLUDE_KEYWORDS:
             if k.lower() in text:
                 exclude_count += 1
         
-        if exclude_count >= 2:
+        if exclude_count >= 1:
             print("❌ 包含排除关键词，跳过")
             return False, 0
             
+        # 验证B2B属性
         required_count = 0
         for k in REQUIRED_KEYWORDS:
             if k.lower() in text:
@@ -179,7 +180,8 @@ def check_company(url):
             print("❌ 不是B2B客户，跳过")
             return False, 0
             
-        core_words = ["camping tent", "sleeping bag", "outdoor gear", "tent", "camping equipment", "hiking gear"]
+        # 计算匹配分数
+        core_words = ["camping tent", "sleeping bag", "outdoor gear", "tent"]
         score = 0
         for word in core_words:
             score += text.count(word) * 5
@@ -204,12 +206,9 @@ def send_results_to_email(filename):
     
     body = f"""
     你好 Mike，
-    
     自动获客系统已完成本次采集。
     本次共采集到 {len(pd.read_excel(filename))} 条有效客户线索。
-    
-    附件是完整的客户名录Excel文件，已按匹配分数从高到低排序。
-    
+    附件是完整的客户名录Excel文件。
     祝商祺！
     自动获客系统
     """
@@ -221,14 +220,13 @@ def send_results_to_email(filename):
             part = MIMEBase('application', 'octet-stream')
             part.set_payload(f.read())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename= {filename}')
+        part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
         msg.attach(part)
         
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
-        text = msg.as_string()
-        server.sendmail(SENDER_EMAIL, YOUR_EMAIL, text)
+        server.sendmail(SENDER_EMAIL, YOUR_EMAIL, msg.as_string())
         server.quit()
         print("✅ 邮件发送成功！已发送到 mike@3csin.com")
     except Exception as e:
@@ -236,15 +234,15 @@ def send_results_to_email(filename):
 
 def main():
     print("="*50)
-    print("Google全自动获客系统 修复版")
-    print("2026年5月19日 凌晨测试版")
+    print("Google全自动获客系统 最终稳定版")
+    print("2026年5月19日 凌晨修复版")
     print("="*50)
     
     all_data = []
     keywords_list = get_search_commands()
     
     print(f"\n本次将运行 {len(keywords_list)} 个搜索指令")
-    print(f"预计运行时间: {len(keywords_list) * (MAX_DELAY + 8) / 60:.1f} 分钟\n")
+    print(f"预计运行时间: {len(keywords_list) * (MAX_DELAY + 5) / 60:.1f} 分钟\n")
     
     try:
         for i, search_word in enumerate(keywords_list):
@@ -260,7 +258,7 @@ def main():
                     continue
                     
                 try:
-                    html_text = requests.get(link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=10).text
+                    html_text = requests.get(link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=8).text
                     mail, status = extract_email(html_text)
                 except Exception as e:
                     print(f"❌ 提取邮箱失败: {str(e)}")
