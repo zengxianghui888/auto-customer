@@ -8,11 +8,14 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       filename: ${{ steps.run-script.outputs.filename }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: 设置Python环境
         uses: actions/setup-python@v5
@@ -20,17 +23,28 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 安装依赖
-        run: pip install requests pandas openpyxl beautifulsoup4
+      - name: 安装依赖（强制输出详细日志）
+        run: |
+          python --version
+          pip --version
+          pip install --upgrade pip
+          pip install requests pandas openpyxl beautifulsoup4 smtplib
+          pip list  # 输出已安装的包，确认依赖装好了
 
-      - name: 运行脚本
+      - name: 运行脚本（强制输出所有错误）
         id: run-script
-        run: python scraper.py
+        run: |
+          echo "开始运行脚本..."
+          python scraper.py 2>&1  # 把错误输出也打印出来
+          echo "脚本运行结束"
 
-      - name: 上传客户名录到Artifacts
-        if: steps.run-script.outputs.filename != ''
+      - name: 保存运行日志（方便排查）
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: 客户名录
-          path: ${{ steps.run-script.outputs.filename }}
+          name: 运行日志
+          path: |
+            *.log
+            *.html
+            *.xlsx
           retention-days: 30
