@@ -11,14 +11,15 @@ from email import encoders
 from datetime import datetime
 from urllib.parse import quote
 from bs4 import BeautifulSoup
+import sys  # 新增：解决GitHub环境编码问题
+import os   # 新增：确保文件能正常保存
 
-# ==================== 配置区（已全部调好，直接运行） ====================
+# ==================== 配置区 ====================
 YOUR_EMAIL = "mike@3csin.com"
-QUALITY_LEVEL = 2  # 1=高质少单 2=均衡 3=多量
+QUALITY_LEVEL = 2
 MIN_DELAY = 6
 MAX_DELAY = 12
 
-# 2026年5月最新有效搜索指令（已过滤垃圾结果）
 BASE_COMMANDS = [
     "camping tent wholesaler USA",
     "sleeping bag distributor United States",
@@ -45,17 +46,20 @@ REQUIRED_KEYWORDS = [
     "bulk", "trade", "b2b", "reseller", "dealer", "export", "purchase"
 ]
 
-# 2026年5月最新有效用户代理
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0"
 ]
 
-# 自动发邮件配置（已为你设置好专用发件箱）
+# 邮件配置
 SENDER_EMAIL = "auto.customer.scraper@gmail.com"
 SENDER_PASSWORD = "xqjb wqzk yvzj qmhl"
 # ==============================================
+
+# 新增：解决GitHub Ubuntu环境的编码问题
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 def get_search_commands():
     if QUALITY_LEVEL == 1:
@@ -71,7 +75,6 @@ def random_delay():
     time.sleep(delay)
 
 def scrape_google_stable(query):
-    """2026年5月18日最新修复版解析器 - 下午实测100%有效"""
     results = []
     ua = random.choice(USER_AGENTS)
     
@@ -83,21 +86,18 @@ def scrape_google_stable(query):
         "Upgrade-Insecure-Requests": "1"
     }
     
-    # 使用Google香港域名，风控最低
     url = f"https://www.google.com.hk/search?q={quote(query)}&num=20&gl=us&safe=off"
     
     try:
         print(f"\n正在搜索: {query}")
         response = requests.get(url, headers=headers, timeout=30)
+        print(f"响应状态码: {response.status_code}")
         
         if response.status_code != 200:
             print(f"❌ 搜索失败，状态码: {response.status_code}")
             return []
             
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # 🔴 核心修复：2026年5月15日Google更新后的正确选择器
-        # 同时兼容新旧两种结构，确保万无一失
         search_results = soup.select('div.g div.yuRUbf a, div.g div.tF2Cxc a')
         
         print(f"找到 {len(search_results)} 条原始结果")
@@ -114,7 +114,6 @@ def scrape_google_stable(query):
                 
             title = title_tag.get_text(strip=True)
             
-            # 过滤无效链接
             if not link.startswith('http') or any(domain in link for domain in ['google.com', 'youtube.com']):
                 continue
                 
@@ -127,6 +126,7 @@ def scrape_google_stable(query):
             
     except Exception as e:
         print(f"❌ 搜索异常: {str(e)}")
+        return []
         
     return results
 
@@ -137,11 +137,9 @@ def extract_email(html):
     if not emails:
         return "未检索到公开邮箱", "待自查"
     
-    # 优先选择销售/采购邮箱
     priority_emails = [e for e in emails if any(k in e.lower() for k in ["sales", "info", "contact", "buyer", "purchase", "export", "import"])]
     email = priority_emails[0] if priority_emails else emails[0]
     
-    # 过滤无效邮箱
     if any(d in email.split("@")[1] for d in ["example.com", "test.com", "noreply.com", "domain.com"]):
         return email, "无效"
         
@@ -163,7 +161,6 @@ def check_company(url):
             
         text = response.text.lower()
         
-        # 过滤中国供应商和电商平台
         exclude_count = 0
         for k in EXCLUDE_KEYWORDS:
             if k.lower() in text:
@@ -173,7 +170,6 @@ def check_company(url):
             print("❌ 包含排除关键词，跳过")
             return False, 0
             
-        # 验证是否为B2B客户
         required_count = 0
         for k in REQUIRED_KEYWORDS:
             if k.lower() in text:
@@ -183,7 +179,6 @@ def check_company(url):
             print("❌ 不是B2B客户，跳过")
             return False, 0
             
-        # 计算匹配分数
         core_words = ["camping tent", "sleeping bag", "outdoor gear", "tent", "camping equipment", "hiking gear"]
         score = 0
         for word in core_words:
@@ -191,12 +186,16 @@ def check_company(url):
             
         print(f"✅ 匹配分数: {score}")
         return True, score
-    except:
+    except Exception as e:
+        print(f"❌ 分析异常: {str(e)}")
         return False, 0
 
 def send_results_to_email(filename):
-    """自动将客户名录发送到你的邮箱"""
     print("\n正在发送结果到你的邮箱...")
+    
+    if not os.path.exists(filename):
+        print(f"❌ 找不到文件: {filename}")
+        return
     
     msg = MIMEMultipart()
     msg['From'] = SENDER_EMAIL
@@ -217,15 +216,14 @@ def send_results_to_email(filename):
     
     msg.attach(MIMEText(body, 'plain'))
     
-    # 添加Excel附件
-    with open(filename, 'rb') as f:
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(f.read())
-    encoders.encode_base64(part)
-    part.add_header('Content-Disposition', f'attachment; filename= {filename}')
-    msg.attach(part)
-    
     try:
+        with open(filename, 'rb') as f:
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(f.read())
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename= {filename}')
+        msg.attach(part)
+        
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
@@ -238,8 +236,8 @@ def send_results_to_email(filename):
 
 def main():
     print("="*50)
-    print("Google全自动获客系统 最终稳定版")
-    print("2026年5月18日 下午实测通过")
+    print("Google全自动获客系统 修复版")
+    print("2026年5月19日 凌晨测试版")
     print("="*50)
     
     all_data = []
@@ -248,42 +246,45 @@ def main():
     print(f"\n本次将运行 {len(keywords_list)} 个搜索指令")
     print(f"预计运行时间: {len(keywords_list) * (MAX_DELAY + 8) / 60:.1f} 分钟\n")
     
-    for i, search_word in enumerate(keywords_list):
-        print(f"\n[{i+1}/{len(keywords_list)}] 处理中...")
-        
-        res_list = scrape_google_stable(search_word)
-        
-        for item in res_list:
-            link = item["website"]
-            flag, score = check_company(link)
+    try:
+        for i, search_word in enumerate(keywords_list):
+            print(f"\n[{i+1}/{len(keywords_list)}] 处理中...")
             
-            if not flag:
-                continue
-                
-            try:
-                html_text = requests.get(link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=10).text
-                mail, status = extract_email(html_text)
-            except:
-                mail = "访问失败无邮箱"
-                status = "异常"
-                
-            row = {
-                "公司名称": item["company_name"],
-                "官网链接": link,
-                "客户邮箱": mail,
-                "邮箱状态": status,
-                "匹配分值": score,
-                "采集时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
+            res_list = scrape_google_stable(search_word)
             
-            all_data.append(row)
-            random_delay()
+            for item in res_list:
+                link = item["website"]
+                flag, score = check_company(link)
+                
+                if not flag:
+                    continue
+                    
+                try:
+                    html_text = requests.get(link, headers={"User-Agent": random.choice(USER_AGENTS)}, timeout=10).text
+                    mail, status = extract_email(html_text)
+                except Exception as e:
+                    print(f"❌ 提取邮箱失败: {str(e)}")
+                    mail = "访问失败无邮箱"
+                    status = "异常"
+                    
+                row = {
+                    "公司名称": item["company_name"],
+                    "官网链接": link,
+                    "客户邮箱": mail,
+                    "邮箱状态": status,
+                    "匹配分值": score,
+                    "采集时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                
+                all_data.append(row)
+                random_delay()
+    except Exception as e:
+        print(f"❌ 主程序异常: {str(e)}")
     
     print("\n" + "="*50)
     print(f"采集完成！共获取 {len(all_data)} 条有效客户线索")
     
     if len(all_data) > 0:
-        # 按匹配分数从高到低排序
         save_name = f"客户资源_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         df = pd.DataFrame(all_data)
         df = df.sort_values(by='匹配分值', ascending=False)
@@ -292,7 +293,6 @@ def main():
         print(f"✅ 数据已保存到: {save_name}")
         print(f"::set-output name=filename::{save_name}")
         
-        # 自动发送邮件到你的邮箱
         send_results_to_email(save_name)
     else:
         print("❌ 没有获取到任何客户线索")
