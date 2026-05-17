@@ -23,12 +23,12 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: 安装依赖（强制输出详细日志）
+      - name: 安装依赖（仅装需要的第三方库）
         run: |
           python --version
           pip --version
           pip install --upgrade pip
-          pip install requests pandas openpyxl beautifulsoup4 smtplib
+          pip install requests pandas openpyxl beautifulsoup4  # 删掉了smtplib
           pip list  # 输出已安装的包，确认依赖装好了
 
       - name: 运行脚本（强制输出所有错误）
