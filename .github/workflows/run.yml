@@ -1,50 +1,35 @@
-name: 自动获客系统
+name: 全球户外客户自动采集
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 19-20 * * *'
+    - cron: '0 18 * * *'  # UTC 18:00 = 北京时间 凌晨2:00
+  workflow_dispatch:
 
 jobs:
-  scrape:
+  crawl:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      filename: ${{ steps.run-script.outputs.filename }}
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-
-      - name: 设置Python环境
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: 安装依赖（仅装需要的第三方库）
-        run: |
-          python --version
-          pip --version
-          pip install --upgrade pip
-          pip install requests pandas openpyxl beautifulsoup4  # 删掉了smtplib
-          pip list  # 输出已安装的包，确认依赖装好了
-
-      - name: 运行脚本（强制输出所有错误）
-        id: run-script
-        run: |
-          echo "开始运行脚本..."
-          python scraper.py 2>&1  # 把错误输出也打印出来
-          echo "脚本运行结束"
-
-      - name: 保存运行日志（方便排查）
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: 运行日志
-          path: |
-            *.log
-            *.html
-            *.xlsx
-          retention-days: 30
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: 安装Chrome
+      run: |
+        wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+        sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+    - name: 安装依赖
+      run: pip install selenium beautifulsoup4 openpyxl lxml requests webdriver-manager
+    - name: 运行采集
+      env:
+        PUSH_EMAIL: ${{ secrets.PUSH_EMAIL }}
+        SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+        PUSH_WX_KEY: ${{ secrets.PUSH_WX_KEY }}
+      run: python all_in_one.py
+    - name: 上传结果
+      uses: actions/upload-artifact@v4
+      with:
+        name: 客户数据-${{ github.run_id }}
+        path: 客户数据/
+        retention-days: 90
